@@ -117,6 +117,7 @@ def convert_eval_dataset(set_name, tokenizer):
   query_ids = {}
   with open(dataset_path, 'r') as f:
     for i, line in enumerate(f):
+      print (line.split('\t'))
       query_id, doc_id, query, doc = line.strip().split('\t')
       label = 0
       if set_name == 'dev':

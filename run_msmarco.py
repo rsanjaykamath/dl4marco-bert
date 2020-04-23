@@ -300,7 +300,7 @@ def input_fn_builder(dataset_path, seq_length, is_training,
 def main(_):
   tf.logging.set_verbosity(tf.logging.INFO)
 
-  if not FLAGS.do_train and not FLAGS.do_eval:
+  if not FLAGS.do_train and not FLAGS.do_eval and not FLAGS.do_predict:
     raise ValueError("At least one of `do_train` or `do_eval` must be True.")
 
   bert_config = modeling.BertConfig.from_json_file(FLAGS.bert_config_file)
@@ -441,6 +441,88 @@ def main(_):
       tf.logging.info("Eval {}:".format(set_name))
       tf.logging.info("  ".join(METRICS_MAP))
       tf.logging.info(all_metrics)
+
+  if FLAGS.do_predict:
+    for set_name in ["eval"]:
+      tf.logging.info("***** Running prediction *****")
+
+      max_eval_examples = None
+      if FLAGS.max_eval_examples:
+        max_eval_examples = FLAGS.max_eval_examples * FLAGS.num_eval_docs
+
+      eval_input_fn = input_fn_builder(
+          dataset_path=FLAGS.data_dir + "/dataset_" + set_name + ".tf",
+          seq_length=FLAGS.max_seq_length,
+          is_training=False,
+          max_eval_examples=max_eval_examples)
+
+      tf.logging.info("Computing metrics...")
+
+      if FLAGS.msmarco_output:
+        msmarco_file = tf.gfile.Open(
+            FLAGS.output_dir + "/msmarco_predictions_" + set_name + ".tsv", "w")
+        query_docids_map = []
+        with tf.gfile.Open(
+            FLAGS.data_dir + "/query_doc_ids_" + set_name + ".txt") as ref_file:
+          for line in ref_file:
+            query_docids_map.append(line.strip().split("\t"))
+
+      result = estimator.predict(input_fn=eval_input_fn,
+                                 yield_single_examples=True)
+      start_time = time.time()
+      results = []
+      all_metrics = np.zeros(len(METRICS_MAP))
+      example_idx = 0
+      total_count = 0
+      for item in result:
+        results.append((item["log_probs"], item["label_ids"]))
+        if total_count % 10000 == 0:
+          tf.logging.info("Read {} examples in {} secs".format(
+              total_count, int(time.time() - start_time)))
+
+        if len(results) == FLAGS.num_eval_docs:
+
+          log_probs, labels = zip(*results)
+          log_probs = np.stack(log_probs).reshape(-1, 2)
+          labels = np.stack(labels)
+
+          scores = log_probs[:, 1]
+          pred_docs = scores.argsort()[::-1]
+          gt = set(list(np.where(labels > 0)[0]))
+
+          all_metrics += metrics.metrics(
+              gt=gt, pred=pred_docs, metrics_map=METRICS_MAP)
+
+          if FLAGS.msmarco_output:
+            start_idx = example_idx * FLAGS.num_eval_docs
+            end_idx = (example_idx + 1) * FLAGS.num_eval_docs
+            query_ids, doc_ids = zip(*query_docids_map[start_idx:end_idx])
+            assert len(set(query_ids)) == 1, "Query ids must be all the same."
+            query_id = query_ids[0]
+            rank = 1
+            for doc_idx in pred_docs:
+              doc_id = doc_ids[doc_idx]
+              # Skip fake docs, as they are only used to ensure that each query
+              # has 1000 docs.
+              if doc_id != "00000000":
+                msmarco_file.write(
+                    "\t".join((query_id, doc_id, str(rank))) + "\n")
+                rank += 1
+
+          example_idx += 1
+          results = []
+
+        total_count += 1
+
+      if FLAGS.msmarco_output:
+        msmarco_file.close()
+
+      all_metrics /= example_idx
+
+      tf.logging.info("Eval {}:".format(set_name))
+      tf.logging.info("  ".join(METRICS_MAP))
+      tf.logging.info(all_metrics)
+
 
 
 if __name__ == "__main__":
