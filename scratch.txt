@@ -1,0 +1,10 @@
+python convert_msmarco_to_tfrecord.py \
+  --output_folder=data/tfrecord \
+  --vocab_file=data/uncased_L-12_H-768_A-12/vocab.txt \
+  --train_dataset_path=data/triples.inference.tsv \
+  --dev_dataset_path=data/top1000.dev \
+  --eval_dataset_path=data/top1000.eval \
+  --dev_qrels_path=data/qrels.tsv \
+  --max_query_length=64\
+  --max_seq_length=512 \
+  --num_eval_docs=1000
